@@ -30,7 +30,7 @@
 
 **One thing, done well: deep codebase intelligence — zero setup, no bloat, fully automatic.** SocratiCode gives AI assistants deep semantic understanding of your codebase — hybrid search, polyglot code dependency graphs, and searchable context artifacts (database schemas, API specs, infra configs, architecture docs). Zero configuration — add it to any MCP host and it manages everything automatically.
 
-**Production-ready**, battle-tested on **enterprise-level** large repositories (up to and over **~40 million lines of code**). **Batched**, automatic **resumable** indexing checkpoints progress — pauses, crashes, restarts, and interruptions don't lose work. The file watcher keeps the **index automatically updated** at every file change and across sessions.
+**Production-ready**, battle-tested on **enterprise-level** large repositories (up to and over **~40 million lines of code**). **Batched**, automatic **resumable** indexing checkpoints progress — pauses, crashes, restarts, and interruptions don't lose work. The file watcher keeps the **index automatically updated** at every file change and across sessions. **Multi-agent ready** — multiple AI agents can work on the same codebase simultaneously, sharing a single index with automatic coordination and zero configuration.
 
 **Private and local by default** — Docker handles everything, no API keys required, no data leaves your machine. **Cloud ready** for embeddings (OpenAI, Google Gemini) and Qdrant, and a **full suite of configuration options** are all available when you need them.
 
@@ -112,6 +112,7 @@ I built SocratiCode because I regularly work on existing, large, and complex cod
 - **Production-Grade Vector Search** — Built on Qdrant, a purpose-built vector database with HNSW indexing, concurrent read/write, and payload filtering. Collections store both a dense vector and a BM25 sparse vector per chunk; the Query API runs both sub-queries in a single round-trip and fuses results with RRF. Designed for scale vector search.
 - **Flexible Embedding Providers** — Switch between Local Ollama (private), Docker Ollama (zero-config), OpenAI (fastest), or Google Gemini (free tier) with a single environment variable. No provider-specific configuration files.
 - **Enterprise-Ready Simplicity** — No agent coordination tuning, no memory limit environment variables, no coordinator/conductor capacity knobs, no backpressure configuration. SocratiCode scales by relying on production-grade infrastructure (Qdrant, proven embedding APIs) rather than complex in-process orchestration.
+- **Multi-Agent Ready** — Multiple AI agents share a single index with zero configuration. Cross-process locking coordinates indexing and watching automatically — one agent indexes, all agents search, one watcher keeps everyone current. Crashed agents don't block others; stale locks are reclaimed automatically.
 - **Measurably better than grep** — On VS Code's 2.45M‑line codebase, SocratiCode answers architectural questions with **61% less data**, **84% fewer steps**, and **37× faster** response than a grep‑based AI agent. [Full benchmark →](#real-world-benchmark-vs-code-245m-lines-of-code-with-claude-opus-46)
 
 ## Features
@@ -135,6 +136,7 @@ I built SocratiCode because I regularly work on existing, large, and complex cod
 - **Session resume** — When reopening a previously indexed project, the file watcher starts automatically on first tool use (search, status, update, or graph query). It catches any changes made since the last session and keeps the index live — no manual action needed.
 - **Auto-start watcher** — The file watcher is automatically activated when you use any SocratiCode tool on an indexed project. It starts after `codebase_index` completes, after `codebase_update`, and on the first `codebase_search`, `codebase_status`, or graph query. You can also start it manually with `codebase_watch { action: "start" }` if needed.
 - **Auto-build code graph** — The code dependency graph is automatically built after indexing and rebuilt when watched files change. No need to call `codebase_graph_build` manually unless you want to force a rebuild.
+- **Multi-agent collaboration** — Multiple AI agents (each running their own MCP instance) can work on the same codebase simultaneously and share a single index. One agent triggers indexing, all agents search against the same data. Only one watcher runs per project — every agent benefits from real-time updates. Cross-process file locking coordinates indexing and watching automatically. Ideal for workflows like one agent writing tests while another fixes code, or a planning agent and an implementation agent working in parallel.
 - **Cross-process safety** — File-based locking (`proper-lockfile`) prevents multiple MCP instances from simultaneously indexing or watching the same project. Stale locks from crashed processes are automatically reclaimed. When another MCP process is already watching a project, `codebase_status` reports "active (watched by another process)" instead of incorrectly showing "inactive."
 - **Concurrency guards** — Duplicate indexing and graph-build operations are prevented. If you call `codebase_index` while indexing is already running, it returns the current progress instead of starting a second operation.
 - **Graceful stop** — Long-running indexing operations can be stopped safely with `codebase_stop`. The current batch finishes and checkpoints, preserving all progress. Re-run `codebase_index` to resume from where it left off.
@@ -742,6 +744,16 @@ then start watching.
 The watcher will not auto-start if a full index or incremental update is currently in
 progress, if the project has not been indexed yet, or if another MCP process is already
 watching the same project.
+
+### Can multiple AI agents work on the same codebase at the same time?
+
+Yes — this is a first-class supported workflow. When multiple agents (each running their own MCP server instance) are pointed at the same project directory, they automatically share the same Qdrant index. The first agent to trigger indexing acquires a cross-process lock and builds the index; any other agent that tries to index simultaneously receives current progress instead of starting a duplicate operation. All agents can search concurrently with no coordination needed — Qdrant handles parallel reads natively.
+
+The file watcher also coordinates automatically: only one process watches per project. Other instances detect this and skip watcher startup. When the watching process picks up a file change, it updates the shared index — and every agent's next search sees the updated results.
+
+If the agent that owns the watcher or indexing lock crashes, its lock goes stale after 2 minutes and another agent's next interaction automatically reclaims it. No manual intervention needed.
+
+This makes SocratiCode ideal for multi-agent workflows: one agent writing tests while another fixes code, a planning agent and an implementation agent working in parallel, or any combination of AI assistants sharing deep codebase knowledge without duplicating work.
 
 ### Can I index multiple projects at the same time?
 
